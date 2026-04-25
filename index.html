@@ -275,7 +275,7 @@
 <div class="section active" id="tab-scan">
   <div id="noDataBannerScan"></div>
   <div class="scanner-wrap">
-    <video id="video" autoplay playsinline muted></video>
+    <div id="reader" style="width:100%;height:100%;"></div>
     <canvas id="snapCanvas"></canvas>
     <div class="cam-off" id="camOff">
       <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24">
@@ -334,7 +334,7 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.18.6/zxing.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <script>
 const SHEET_URL = 'https://script.google.com/macros/s/AKfycbwez_R5NvuFvUxwpwGrw63Yhd3xDQoMIW7N-chBV1ZgxjBeIUipSUPwmLEYEOC7uQd6-A/exec';
 const STORAGE_KEY = 'nerefuda_v1';
@@ -462,20 +462,12 @@ function renderResult(no, container) {
 }
 
 // --- Camera ---
-let codeReader = null;
+let html5QrCode = null;
 
 async function toggleCamera() {
   if (scanning) { stopCamera(); return; }
   try {
-    const ZXing = window.ZXing;
-    if (!ZXing) { toastError('ライブラリ読み込み中です。少し待ってから再度お試しください。'); return; }
-    codeReader = new ZXing.BrowserMultiFormatReader();
-    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-    const backCamera = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length - 1];
-    const deviceId = backCamera ? backCamera.deviceId : undefined;
-
-    const v = document.getElementById('video');
-    v.style.display = '';
+    html5QrCode = new Html5Qrcode('reader');
     document.getElementById('camOff').style.display = 'none';
     document.getElementById('scanOverlay').classList.add('active');
     document.getElementById('btnCamera').innerHTML = `
@@ -485,24 +477,28 @@ async function toggleCamera() {
       </svg>停止`;
     scanning = true;
 
-    await codeReader.decodeFromVideoDevice(deviceId, v, (result, err) => {
-      if (result) {
-        const code = result.getText();
+    await html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 120 } },
+      (code) => {
         stopCamera();
         renderResult(code, document.getElementById('scanResult'));
-      }
-    });
+      },
+      () => {}
+    );
   } catch(e) {
     toastError('カメラのアクセスを許可してください');
     stopCamera();
   }
 }
 
-function stopCamera() {
-  if (codeReader) { codeReader.reset(); codeReader = null; }
+async function stopCamera() {
+  if (html5QrCode) {
+    try { await html5QrCode.stop(); } catch(e) {}
+    try { html5QrCode.clear(); } catch(e) {}
+    html5QrCode = null;
+  }
   scanning = false;
-  const v = document.getElementById('video');
-  v.srcObject = null; v.style.display = 'none';
   document.getElementById('camOff').style.display = '';
   document.getElementById('scanOverlay').classList.remove('active');
   document.getElementById('btnCamera').innerHTML = `

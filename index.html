@@ -334,7 +334,7 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/zxing-js/0.18.6/zxing.min.js"></script>
 <script>
 const SHEET_URL = 'https://script.google.com/macros/s/AKfycbwez_R5NvuFvUxwpwGrw63Yhd3xDQoMIW7N-chBV1ZgxjBeIUipSUPwmLEYEOC7uQd6-A/exec';
 const STORAGE_KEY = 'nerefuda_v1';
@@ -462,12 +462,20 @@ function renderResult(no, container) {
 }
 
 // --- Camera ---
+let codeReader = null;
+
 async function toggleCamera() {
-  if (stream) { stopCamera(); return; }
+  if (scanning) { stopCamera(); return; }
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const ZXing = window.ZXing;
+    if (!ZXing) { toastError('ライブラリ読み込み中です。少し待ってから再度お試しください。'); return; }
+    codeReader = new ZXing.BrowserMultiFormatReader();
+    const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
+    const backCamera = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length - 1];
+    const deviceId = backCamera ? backCamera.deviceId : undefined;
+
     const v = document.getElementById('video');
-    v.srcObject = stream; v.style.display = '';
+    v.style.display = '';
     document.getElementById('camOff').style.display = 'none';
     document.getElementById('scanOverlay').classList.add('active');
     document.getElementById('btnCamera').innerHTML = `
@@ -476,14 +484,22 @@ async function toggleCamera() {
         <line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/>
       </svg>停止`;
     scanning = true;
-    startScan(v);
+
+    await codeReader.decodeFromVideoDevice(deviceId, v, (result, err) => {
+      if (result) {
+        const code = result.getText();
+        stopCamera();
+        renderResult(code, document.getElementById('scanResult'));
+      }
+    });
   } catch(e) {
     toastError('カメラのアクセスを許可してください');
+    stopCamera();
   }
 }
 
 function stopCamera() {
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (codeReader) { codeReader.reset(); codeReader = null; }
   scanning = false;
   const v = document.getElementById('video');
   v.srcObject = null; v.style.display = 'none';
@@ -496,39 +512,7 @@ function stopCamera() {
     </svg>カメラ起動`;
 }
 
-function startScan(video) {
-  if (typeof Quagga === 'undefined') return;
-  const canvas = document.getElementById('snapCanvas');
-  const ctx = canvas.getContext('2d');
-  let last = 0, busy = false;
-  function tick() {
-    if (!scanning) return;
-    if (video.readyState >= 2 && !busy) {
-      const now = Date.now();
-      if (now - last > 700) {
-        last = now; busy = true;
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
-        ctx.drawImage(video, 0, 0);
-        Quagga.decodeSingle({
-          decoder: { readers: ['code_128_reader', 'ean_reader', 'ean_8_reader'] },
-          locate: true,
-          src: canvas.toDataURL('image/jpeg', 0.85)
-        }, result => {
-          busy = false;
-          if (result && result.codeResult) {
-            const code = result.codeResult.code;
-            stopCamera();
-            renderResult(code, document.getElementById('scanResult'));
-          }
-        });
-      }
-    }
-    requestAnimationFrame(tick);
-  }
-  video.addEventListener('loadedmetadata', () => requestAnimationFrame(tick), { once: true });
-  requestAnimationFrame(tick);
-}
+function startScan(video) {}
 
 // --- Manual ---
 function manualSearch() {

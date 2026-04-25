@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>値札スキャナー</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=JetBrains+Mono:wght@500;600&display=swap');
+
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #242424;
+    --border: #2a2a2a;
+    --border2: #383838;
+    --text: #f0f0f0;
+    --text2: #888;
+    --text3: #555;
+    --accent: #00e676;
+    --accent-dim: rgba(0,230,118,0.12);
+    --warn: #ff6b35;
+    --warn-dim: rgba(255,107,53,0.12);
+    --info: #4fc3f7;
+    --info-dim: rgba(79,195,247,0.12);
+    --radius: 14px;
+    --radius-sm: 8px;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Noto Sans JP', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Header */
+  .header {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .logo {
+    width: 34px; height: 34px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(0,230,118,0.25);
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .logo svg { width: 18px; height: 18px; stroke: var(--accent); }
+  .header h1 { font-size: 16px; font-weight: 700; }
+  .update-btn {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 20px;
+    color: var(--text);
+    font-size: 13px; font-family: var(--sans); font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .update-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .update-btn.loading { opacity: 0.6; pointer-events: none; }
+  .update-btn svg { width: 14px; height: 14px; stroke: currentColor; }
+  .update-btn.spinning svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Status bar */
+  .status-bar {
+    padding: 8px 16px;
+    font-size: 12px;
+    display: flex; align-items: center; gap: 6px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.ok { background: var(--accent); }
+  .status-dot.warn { background: var(--warn); }
+  .status-dot.none { background: var(--text3); }
+  .status-text { color: var(--text2); }
+  .status-time { margin-left: auto; color: var(--text3); font-family: var(--mono); font-size: 11px; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    position: sticky; top: 59px; z-index: 40;
+  }
+  .tab {
+    flex: 1; padding: 11px 8px;
+    font-size: 13px; font-family: var(--sans);
+    background: none; border: none; color: var(--text3);
+    cursor: pointer; transition: color 0.2s;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Sections */
+  .section { display: none; padding: 16px; }
+  .section.active { display: block; }
+
+  /* Scanner */
+  .scanner-wrap {
+    position: relative; width: 100%;
+    aspect-ratio: 4/3; max-height: 250px;
+    border-radius: var(--radius); overflow: hidden;
+    background: #000; margin-bottom: 14px;
+    border: 1px solid var(--border);
+  }
+  #video { width: 100%; height: 100%; object-fit: cover; display: none; }
+  #snapCanvas { display: none; }
+  .cam-off {
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px; color: var(--text3); font-size: 13px;
+  }
+  .cam-off svg { width: 40px; height: 40px; stroke: var(--text3); opacity: 0.5; }
+  .scan-overlay { position: absolute; inset: 0; pointer-events: none; display: none; }
+  .scan-overlay.active { display: block; }
+  .scan-corner { position: absolute; width: 22px; height: 22px; border-color: var(--accent); border-style: solid; }
+  .sc-tl { top: 14%; left: 8%; border-width: 2.5px 0 0 2.5px; border-radius: 3px 0 0 0; }
+  .sc-tr { top: 14%; right: 8%; border-width: 2.5px 2.5px 0 0; border-radius: 0 3px 0 0; }
+  .sc-bl { bottom: 14%; left: 8%; border-width: 0 0 2.5px 2.5px; border-radius: 0 0 0 3px; }
+  .sc-br { bottom: 14%; right: 8%; border-width: 0 2.5px 2.5px 0; border-radius: 0 0 3px 0; }
+  .scan-line {
+    position: absolute; left: 8%; right: 8%; height: 1.5px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: scanMove 2s ease-in-out infinite;
+    box-shadow: 0 0 8px var(--accent);
+  }
+  @keyframes scanMove { 0%,100%{top:16%;opacity:.5} 50%{top:80%;opacity:1} }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 11px 20px; border-radius: var(--radius-sm);
+    font-size: 14px; font-family: var(--sans); font-weight: 500;
+    cursor: pointer; transition: all 0.15s;
+    border: 1px solid var(--border2); background: var(--surface); color: var(--text);
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+  .btn.primary:hover { background: #00ff84; }
+  .btn svg { width: 16px; height: 16px; stroke: currentColor; flex-shrink: 0; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+
+  /* Result */
+  .result-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+    margin-bottom: 14px; animation: fadeIn 0.25s ease;
+  }
+  .result-box.found { border-color: rgba(0,230,118,0.35); background: rgba(0,230,118,0.04); }
+  .result-box.notfound { border-color: rgba(255,107,53,0.35); background: rgba(255,107,53,0.04); }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+
+  .result-no {
+    font-family: var(--mono); font-size: 11px; color: var(--text3);
+    letter-spacing: 1px; margin-bottom: 12px;
+  }
+  .result-hinban {
+    font-family: var(--mono); font-size: 18px; font-weight: 600;
+    color: var(--text); margin-bottom: 14px; letter-spacing: 0.5px;
+  }
+  .result-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin-bottom: 14px;
+  }
+  .result-cell {
+    background: var(--surface2); border-radius: var(--radius-sm);
+    padding: 10px 12px;
+  }
+  .result-cell-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; }
+  .result-cell-value { font-size: 15px; font-weight: 500; }
+  .result-price-wrap {
+    background: var(--accent-dim);
+    border: 1px solid rgba(0,230,118,0.2);
+    border-radius: var(--radius-sm); padding: 14px 16px;
+    display: flex; align-items: baseline; gap: 4px;
+  }
+  .result-price-label { font-size: 12px; color: var(--text2); }
+  .result-price { font-size: 32px; font-weight: 700; font-family: var(--mono); color: var(--accent); margin-left: auto; }
+  .result-yen { font-size: 18px; color: var(--accent); font-family: var(--mono); }
+  .not-found-msg { font-size: 15px; color: var(--warn); }
+  .not-found-sub { font-size: 13px; color: var(--text3); margin-top: 6px; }
+
+  /* Manual input */
+  .input-group { margin-bottom: 14px; }
+  .input-group label { font-size: 12px; color: var(--text3); display: block; margin-bottom: 6px; letter-spacing: 0.5px; }
+  .input-group input {
+    width: 100%; background: var(--surface);
+    border: 1px solid var(--border2); border-radius: var(--radius-sm);
+    color: var(--text); font-size: 22px; font-family: var(--mono);
+    padding: 12px 14px; outline: none; transition: border-color 0.15s;
+    letter-spacing: 2px;
+  }
+  .input-group input:focus { border-color: var(--accent); }
+  .input-group input::placeholder { color: var(--text3); font-size: 16px; letter-spacing: 0; }
+
+  /* List */
+  .list-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .list-meta { font-size: 12px; color: var(--text3); }
+  .product-list { display: flex; flex-direction: column; }
+  .product-item {
+    display: flex; align-items: center; padding: 13px 0;
+    border-bottom: 1px solid var(--border); gap: 12px;
+  }
+  .product-item:last-child { border-bottom: none; }
+  .product-no {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    color: var(--accent); width: 28px; flex-shrink: 0; text-align: center;
+  }
+  .product-info { flex: 1; min-width: 0; }
+  .product-hinban { font-family: var(--mono); font-size: 14px; font-weight: 600; }
+  .product-detail { font-size: 12px; color: var(--text3); margin-top: 2px; }
+  .product-price { font-size: 16px; font-weight: 700; font-family: var(--mono); color: var(--accent); flex-shrink: 0; }
+  .empty { text-align: center; padding: 40px 20px; color: var(--text3); font-size: 14px; line-height: 2.2; }
+
+  /* No data warning */
+  .no-data-banner {
+    background: var(--warn-dim); border: 1px solid rgba(255,107,53,0.3);
+    border-radius: var(--radius-sm); padding: 12px 16px;
+    font-size: 13px; color: var(--warn); margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .no-data-banner svg { width: 16px; height: 16px; stroke: var(--warn); flex-shrink: 0; }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--accent); color: #000; font-weight: 700;
+    font-size: 13px; padding: 10px 22px; border-radius: 24px;
+    opacity: 0; transition: all 0.25s; z-index: 300;
+    white-space: nowrap; pointer-events: none;
+  }
+  .toast.error { background: var(--warn); color: #fff; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+      <path d="M3 9h2v6H3zm4-2h1v10H7zm3 2h1v6h-1zm3-2h2v10h-2zm4 2h1v6h-1zm3-2h1v10h-1z"/>
+    </svg>
+  </div>
+  <h1>値札スキャナー</h1>
+  <button class="update-btn" id="updateBtn" onclick="updateData()">
+    <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+      <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+    </svg>
+    更新
+  </button>
+</header>
+
+<div class="status-bar" id="statusBar">
+  <div class="status-dot none" id="statusDot"></div>
+  <span class="status-text" id="statusText">データ未取得</span>
+  <span class="status-time" id="statusTime"></span>
+</div>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('scan')">スキャン</button>
+  <button class="tab" onclick="switchTab('manual')">手動入力</button>
+  <button class="tab" onclick="switchTab('list')">商品一覧</button>
+</div>
+
+<!-- Scan -->
+<div class="section active" id="tab-scan">
+  <div id="noDataBannerScan"></div>
+  <div class="scanner-wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="snapCanvas"></canvas>
+    <div class="cam-off" id="camOff">
+      <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" viewBox="0 0 24 24">
+        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+      <span>カメラを起動してください</span>
+    </div>
+    <div class="scan-overlay" id="scanOverlay">
+      <div class="scan-corner sc-tl"></div>
+      <div class="scan-corner sc-tr"></div>
+      <div class="scan-corner sc-bl"></div>
+      <div class="scan-corner sc-br"></div>
+      <div class="scan-line"></div>
+    </div>
+  </div>
+  <div class="btn-row">
+    <button class="btn primary" id="btnCamera" onclick="toggleCamera()">
+      <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+      カメラ起動
+    </button>
+  </div>
+  <div id="scanResult"></div>
+</div>
+
+<!-- Manual -->
+<div class="section" id="tab-manual">
+  <div id="noDataBannerManual"></div>
+  <div class="input-group">
+    <label>商品No（バーコードの数字）</label>
+    <input type="tel" id="manualNo" placeholder="1" inputmode="numeric">
+  </div>
+  <div class="btn-row">
+    <button class="btn primary" onclick="manualSearch()">
+      <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      検索
+    </button>
+  </div>
+  <div id="manualResult"></div>
+</div>
+
+<!-- List -->
+<div class="section" id="tab-list">
+  <div class="list-header">
+    <span class="list-meta" id="listMeta">—</span>
+  </div>
+  <div class="product-list" id="productList">
+    <div class="empty">「更新」をタップして<br>商品データを取得してください</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script>
+const SHEET_URL = 'https://script.google.com/macros/s/AKfycbwez_R5NvuFvUxwpwGrw63Yhd3xDQoMIW7N-chBV1ZgxjBeIUipSUPwmLEYEOC7uQd6-A/exec';
+const STORAGE_KEY = 'nerefuda_v1';
+
+let products = {}; // { "1": {no,hinban,jigane,size,price}, ... }
+let lastUpdated = null;
+let stream = null;
+let scanning = false;
+let activeTab = 'scan';
+
+// --- Storage ---
+function loadLocal() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (d) { products = d.products || {}; lastUpdated = d.lastUpdated || null; }
+  } catch(e) {}
+}
+function saveLocal() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ products, lastUpdated })); } catch(e) {}
+}
+
+// --- Update from Google Sheets ---
+async function updateData() {
+  const btn = document.getElementById('updateBtn');
+  btn.classList.add('loading', 'spinning');
+  btn.querySelector('span') && (btn.querySelector('span').textContent = '更新中...');
+
+  try {
+    const res = await fetch(SHEET_URL);
+    if (!res.ok) throw new Error('fetch failed');
+    const rows = await res.json();
+    if (!rows || rows.length === 0) throw new Error('データが空です');
+    products = {};
+    rows.forEach(row => {
+      const no = String(row['No'] || row['NO'] || row['no'] || '').trim();
+      if (!no) return;
+      products[no] = {
+        no,
+        hinban: String(row['品番'] || '').trim(),
+        jigane: String(row['地金'] || '').trim(),
+        size:   String(row['サイズ'] || '').trim(),
+        price:  String(row['価格'] || '').trim(),
+      };
+    });
+    lastUpdated = new Date().toISOString();
+    saveLocal();
+
+    updateStatus(true);
+    renderList();
+    showBanners();
+    toast('最新データを取得しました');
+  } catch(e) {
+    toastError('更新に失敗しました。通信環境を確認してください。');
+  } finally {
+    btn.classList.remove('loading', 'spinning');
+  }
+}
+
+// --- Status bar ---
+function updateStatus(ok) {
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  const time = document.getElementById('statusTime');
+  const count = Object.keys(products).length;
+
+  if (!lastUpdated) {
+    dot.className = 'status-dot none';
+    text.textContent = 'データ未取得';
+    time.textContent = '';
+  } else {
+    dot.className = 'status-dot ok';
+    text.textContent = `${count}件のデータ`;
+    const d = new Date(lastUpdated);
+    time.textContent = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')} 更新`;
+  }
+}
+
+function showBanners() {
+  const html = !lastUpdated
+    ? `<div class="no-data-banner"><svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>右上の「更新」をタップしてデータを取得してください</div>`
+    : '';
+  document.getElementById('noDataBannerScan').innerHTML = html;
+  document.getElementById('noDataBannerManual').innerHTML = html;
+}
+
+// --- Search ---
+function lookupNo(no) {
+  const key = String(no).trim();
+  return products[key] || null;
+}
+
+function renderResult(no, container) {
+  const p = lookupNo(no);
+  if (p) {
+    const priceNum = Number(String(p.price).replace(/,/g,''));
+    const priceStr = isNaN(priceNum) ? p.price : priceNum.toLocaleString();
+    container.innerHTML = `
+      <div class="result-box found">
+        <div class="result-no">No. ${p.no}</div>
+        <div class="result-hinban">${p.hinban}</div>
+        <div class="result-grid">
+          <div class="result-cell">
+            <div class="result-cell-label">地金</div>
+            <div class="result-cell-value">${p.jigane}</div>
+          </div>
+          <div class="result-cell">
+            <div class="result-cell-label">サイズ</div>
+            <div class="result-cell-value">${p.size}</div>
+          </div>
+        </div>
+        <div class="result-price-wrap">
+          <span class="result-price-label">税込価格</span>
+          <span class="result-yen">¥</span>
+          <span class="result-price">${priceStr}</span>
+        </div>
+      </div>`;
+  } else {
+    container.innerHTML = `
+      <div class="result-box notfound">
+        <div class="result-no">No. ${no}</div>
+        <div class="not-found-msg">商品が見つかりません</div>
+        <div class="not-found-sub">このNoはデータに登録されていません<br>「更新」で最新データを取得してください</div>
+      </div>`;
+  }
+}
+
+// --- Camera ---
+async function toggleCamera() {
+  if (stream) { stopCamera(); return; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const v = document.getElementById('video');
+    v.srcObject = stream; v.style.display = '';
+    document.getElementById('camOff').style.display = 'none';
+    document.getElementById('scanOverlay').classList.add('active');
+    document.getElementById('btnCamera').innerHTML = `
+      <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+        <rect x="2" y="2" width="20" height="20" rx="2"/>
+        <line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/>
+      </svg>停止`;
+    scanning = true;
+    startScan(v);
+  } catch(e) {
+    toastError('カメラのアクセスを許可してください');
+  }
+}
+
+function stopCamera() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  scanning = false;
+  const v = document.getElementById('video');
+  v.srcObject = null; v.style.display = 'none';
+  document.getElementById('camOff').style.display = '';
+  document.getElementById('scanOverlay').classList.remove('active');
+  document.getElementById('btnCamera').innerHTML = `
+    <svg fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" viewBox="0 0 24 24">
+      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+      <circle cx="12" cy="13" r="4"/>
+    </svg>カメラ起動`;
+}
+
+function startScan(video) {
+  if (typeof Quagga === 'undefined') return;
+  const canvas = document.getElementById('snapCanvas');
+  const ctx = canvas.getContext('2d');
+  let last = 0, busy = false;
+  function tick() {
+    if (!scanning) return;
+    if (video.readyState >= 2 && !busy) {
+      const now = Date.now();
+      if (now - last > 700) {
+        last = now; busy = true;
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        ctx.drawImage(video, 0, 0);
+        Quagga.decodeSingle({
+          decoder: { readers: ['code_128_reader', 'ean_reader', 'ean_8_reader'] },
+          locate: true,
+          src: canvas.toDataURL('image/jpeg', 0.85)
+        }, result => {
+          busy = false;
+          if (result && result.codeResult) {
+            const code = result.codeResult.code;
+            stopCamera();
+            renderResult(code, document.getElementById('scanResult'));
+          }
+        });
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  video.addEventListener('loadedmetadata', () => requestAnimationFrame(tick), { once: true });
+  requestAnimationFrame(tick);
+}
+
+// --- Manual ---
+function manualSearch() {
+  const no = document.getElementById('manualNo').value.trim();
+  if (!no) return;
+  renderResult(no, document.getElementById('manualResult'));
+}
+document.getElementById('manualNo').addEventListener('keydown', e => { if (e.key === 'Enter') manualSearch(); });
+
+// --- List ---
+function renderList() {
+  const el = document.getElementById('productList');
+  const keys = Object.keys(products).sort((a,b) => Number(a)-Number(b));
+  document.getElementById('listMeta').textContent = keys.length ? `${keys.length}件` : '—';
+  if (!keys.length) {
+    el.innerHTML = '<div class="empty">「更新」をタップして<br>商品データを取得してください</div>';
+    return;
+  }
+  el.innerHTML = keys.map(k => {
+    const p = products[k];
+    const priceNum = Number(String(p.price).replace(/,/g,''));
+    const priceStr = isNaN(priceNum) ? p.price : priceNum.toLocaleString();
+    return `<div class="product-item">
+      <div class="product-no">${p.no}</div>
+      <div class="product-info">
+        <div class="product-hinban">${p.hinban}</div>
+        <div class="product-detail">${p.jigane}　サイズ ${p.size}</div>
+      </div>
+      <div class="product-price">¥${priceStr}</div>
+    </div>`;
+  }).join('');
+}
+
+// --- Tab ---
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', ['scan','manual','list'][i] === name);
+  });
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  activeTab = name;
+  if (name !== 'scan') stopCamera();
+  if (name === 'list') renderList();
+}
+
+// --- Toast ---
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.className = 'toast'; el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+function toastError(msg) {
+  const el = document.getElementById('toast');
+  el.className = 'toast error'; el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+// --- Init ---
+loadLocal();
+updateStatus();
+showBanners();
+renderList();
+</script>
+</body>
+</html>
